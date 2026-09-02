@@ -9,20 +9,13 @@ Kamu adalah NOVA, Executive AI Business Assistant untuk Knowhere Studio (vendor 
 
 TUGAS UTAMA:
 1. Membantu Klien & Admin mengelola jadwal booking, pencatatan pembayaran DP & pelunasan, pengecekan ketersediaan tanggal, dan pembuatan PDF invoice resmi secara otomatis.
-2. Membaca dan menganalisis foto bukti transfer (BCA, Mandiri, BRI, BNI, Seabank, Jago, QRIS, dll) secara akurat.
-3. Menjalankan Tool Calling (Function Calling) yang sesuai untuk berinteraksi dengan Google Spreadsheet, Google Drive, Google Docs, dan Google Calendar melalui Headless GAS.
-
-ATURAN MULTIMODAL & STRUK TRANSFER:
-- Saat menerima foto struk bukti transfer:
-  1. Ekstrak data dari struk: Nama Bank, Nama Pengirim, Nama Penerima, Nominal Transfer (dalam Rupiah), Tanggal & Jam, Nomor Referensi.
-  2. Cocokkan nama klien dengan database. Jika nama klien terdeteksi, panggil tool 'updatePayment' dengan nominal yang tertera di struk.
-  3. Panggil tool 'generatePdfInvoice' untuk membuat PDF invoice resmi terbaru dengan bukti transfer tersebut.
-  4. Berikan balasan konfirmasi yang ramah, ringkas, dan profesional lengkap dengan detail pembayaran dan link Google Drive.
+2. Menjalankan Tool Calling (Function Calling) yang sesuai untuk berinteraksi dengan Google Spreadsheet, Google Drive, Google Docs, dan Google Calendar melalui Headless GAS.
+3. Saat Klien / Admin mengirimkan foto bukti transfer dan meminta invoice, panggil tool 'generatePdfInvoice' atau 'updatePayment' dengan menyertakan bukti_url yang ada.
 
 FORMAT BALASAN:
 - Gunakan Bahasa Indonesia yang ramah, sopan, dan terstruktur.
 - Gunakan formatting WhatsApp: *tebal*, _miring_, emoji yang relevan.
-- Selalu sertakan link Google Drive PDF Invoice dan Folder Klien jika tersedia.
+- Selalu sertakan link Google Drive PDF Invoice dan Folder Klien jika tersedia dari hasil tool.
 `;
 
 /**
@@ -47,24 +40,6 @@ function appendToSession(sender, role, content, extra = {}) {
       { role: 'system', content: SYSTEM_PROMPT },
       ...history.slice(history.length - 10)
     ]);
-  }
-}
-
-/**
- * Download file gambar dari URL menjadi Data URL Base64
- */
-async function fetchImageAsDataUrl(imageUrl) {
-  try {
-    const response = await axios.get(imageUrl, {
-      responseType: 'arraybuffer',
-      timeout: 20000
-    });
-    const contentType = response.headers['content-type'] || 'image/jpeg';
-    const base64Data = Buffer.from(response.data).toString('base64');
-    return `data:${contentType};base64,${base64Data}`;
-  } catch (error) {
-    console.error('[AI_SERVICE] Gagal mengunduh gambar:', error.message);
-    return null;
   }
 }
 
@@ -111,76 +86,25 @@ async function transcribeAudioGroq(audioUrl) {
 }
 
 /**
- * Ekstrak informasi dari Gambar Struk via Groq Vision (llama-3.2-11b-vision-preview)
- */
-async function processVisionWithGroq(imageDataUrl, userCaption = '') {
-  const visionPrompt = `Analisis foto bukti transfer / struk pembayaran ini secara sangat teliti.
-Ekstrak data berikut:
-- Nama Bank:
-- Nama Pengirim:
-- Nama Penerima:
-- Nominal Transfer: (dalam angka Rupiah)
-- Tanggal & Waktu:
-- Nomor Referensi:
-- Catatan / Keterangan:
-
-Caption dari pengirim: "${userCaption || 'Tanpa caption'}"`;
-
-  const messages = [
-    {
-      role: 'user',
-      content: [
-        { type: 'text', text: visionPrompt },
-        { type: 'image_url', image_url: { url: imageDataUrl } }
-      ]
-    }
-  ];
-
-  try {
-    const visionModel = config.GROQ_VISION_MODEL || 'llama-3.2-11b-vision-preview';
-    console.log(`[GROQ_VISION] Menjalankan OCR struk transfer dengan ${visionModel}...`);
-    const res = await axios.post(config.GROQ_URL, {
-      model: visionModel,
-      messages: messages,
-      temperature: 0.1,
-      max_tokens: 800
-    }, {
-      headers: {
-        'Authorization': `Bearer ${config.GROQ_API_KEY}`,
-        'Content-Type': 'application/json'
-      },
-      timeout: 30000
-    });
-
-    const ocrText = res.data.choices[0].message.content;
-    console.log('[GROQ_VISION RESULT]:\n', ocrText);
-    return ocrText;
-  } catch (err) {
-    console.error('[GROQ_VISION ERROR]:', err.message);
-    return `[Gambar Struk Terlampir tapi gagal dibaca otomatis: ${err.message}]`;
-  }
-}
-
-/**
- * Panggil Groq Chat Completion API dengan Auto-Failover Matrix (openai/gpt-oss-120b -> qwen/qwen3.8-27b -> openai/gpt-oss-20b)
+ * Panggil Groq Chat Completion API dengan Auto-Failover Matrix resmi dari Groq Console
+ * (openai/gpt-oss-120b -> qwen/qwen3.8-27b -> openai/gpt-oss-20b -> qwen/qwen3.6-27b)
  */
 async function callGroqChat(messages, tools = groqTools) {
   if (!config.GROQ_API_KEY) {
     throw new Error('GROQ_API_KEY belum dikonfigurasi di Environment Variables Vercel!');
   }
 
-  // Matrix failover model persis sesuai Code.gs
+  // Model hierarchy persis dari model yang aktif di Groq Console Anda
   const modelHierarchy = [
-    config.GROQ_MODEL,         // Primary: openai/gpt-oss-120b
-    config.GROQ_BACKUP_MODEL,  // Failover: qwen/qwen3.8-27b
-    config.GROQ_FAST_MODEL,    // Fast: openai/gpt-oss-20b
-    'llama-3.3-70b-versatile', // Fallback standard
-    'llama-3.1-8b-instant'
-  ].filter(Boolean);
+    config.GROQ_MODEL || 'openai/gpt-oss-120b',
+    config.GROQ_BACKUP_MODEL || 'qwen/qwen3.8-27b',
+    config.GROQ_FAST_MODEL || 'openai/gpt-oss-20b',
+    'qwen/qwen3.6-27b'
+  ];
 
   const uniqueModels = [...new Set(modelHierarchy)];
 
-  // Sanitizer: Hapus field reasoning internal jika ada
+  // Sanitizer: Hapus field internal yang ditolak
   const cleanMessages = messages.map(m => {
     const copy = { ...m };
     delete copy.reasoning;
@@ -191,7 +115,7 @@ async function callGroqChat(messages, tools = groqTools) {
   let lastError = null;
   for (const model of uniqueModels) {
     try {
-      console.log(`[GROQ_MULTI_AGENT] Memanggil model: ${model}...`);
+      console.log(`[GROQ_MULTI_AGENT] Memanggil model Groq: ${model}...`);
       const payload = {
         model: model,
         messages: cleanMessages,
@@ -218,7 +142,7 @@ async function callGroqChat(messages, tools = groqTools) {
       }
     } catch (err) {
       const errMsg = err.response && err.response.data ? JSON.stringify(err.response.data) : err.message;
-      console.warn(`[GROQ_MULTI_AGENT WARN] Model "${model}" rate limited / gagal (${errMsg}), beralih ke model cadangan...`);
+      console.warn(`[GROQ_MULTI_AGENT WARN] Model "${model}" mengalami kendala (${errMsg}), beralih ke model cadangan...`);
       lastError = err;
     }
   }
@@ -233,7 +157,7 @@ async function processMessageWithAI({ sender, message, mediaUrl, isImage, isAudi
   try {
     let promptContent = message || '';
 
-    // 1. Handle Voice Note (Groq Whisper)
+    // 1. Handle Voice Note (Groq Whisper: whisper-large-v3-turbo)
     if (isAudio && mediaUrl) {
       const whisperResult = await transcribeAudioGroq(mediaUrl);
       if (whisperResult.success && whisperResult.text) {
@@ -243,12 +167,14 @@ async function processMessageWithAI({ sender, message, mediaUrl, isImage, isAudi
       }
     }
 
-    // 2. Handle Gambar Struk (Groq Vision)
+    // 2. Handle Foto Bukti Transfer
     if (isImage && mediaUrl) {
-      const dataUrl = await fetchImageAsDataUrl(mediaUrl);
-      if (dataUrl) {
-        const ocrResult = await processVisionWithGroq(dataUrl, message);
-        promptContent = `[KLIEN MENGIRIMKAN FOTO BUKTI TRANSFER]\nHasil OCR Vision:\n${ocrResult}\n\nPesan Klien: ${message || 'Tolong proses pembayaran dan buatkan invoice resminya.'}`;
+      if (!promptContent.trim()) {
+        // Jika foto dikirim tanpa teks caption -> kirim panduan interaktif langsung
+        return `📸 *Foto Bukti Transfer Berhasil Diterima!*\n\nSilakan balas dengan perintah invoice, contoh:\n👉 \`/invoice Kinnas ID dp1 500 ribu\`\n👉 \`/invoice Widya Dela Putri\`\n\n_NOVA akan otomatis mengunggah foto ini ke folder Drive klien & membuatkan Invoice PDF resmi!_ ✨`;
+      } else {
+        // Jika ada teks/caption, sertakan mediaUrl ke context agar diteruskan ke tool generatePdfInvoice
+        promptContent = `${promptContent}\n[Bukti Transfer URL: ${mediaUrl}]`;
       }
     }
 
@@ -290,6 +216,11 @@ async function processMessageWithAI({ sender, message, mediaUrl, isImage, isAudi
           toolArgs = JSON.parse(toolCall.function.arguments);
         } catch (e) {
           toolArgs = {};
+        }
+
+        // Sisipkan buktiUrl jika ada foto yang dikirim
+        if (isImage && mediaUrl && !toolArgs.bukti_url) {
+          toolArgs.bukti_url = mediaUrl;
         }
 
         console.log(`[EXECUTE_GAS_TOOL] "${toolName}" dengan args:`, JSON.stringify(toolArgs));

@@ -3,7 +3,7 @@ require('dotenv').config();
 const config = {
   PORT: process.env.PORT || 3000,
   
-  // Groq AI Multi-Agent Matrix (Sinkron 100% dengan Code.gs)
+  // Groq AI Multi-Agent Matrix (Sinkron 100% dengan Code.gs & Groq Console)
   GROQ_API_KEY: process.env.GROQ_API_KEY || '',
   GROQ_MODEL: process.env.GROQ_MODEL || 'openai/gpt-oss-120b',
   GROQ_BACKUP_MODEL: process.env.GROQ_BACKUP_MODEL || 'qwen/qwen3.8-27b',
@@ -11,7 +11,6 @@ const config = {
   GROQ_EXTRACTOR_MODEL: process.env.GROQ_EXTRACTOR_MODEL || 'qwen/qwen3.8-27b',
   GROQ_ANALYST_MODEL: process.env.GROQ_ANALYST_MODEL || 'groq/compound',
   GROQ_VOICE_MODEL: process.env.GROQ_VOICE_MODEL || 'whisper-large-v3-turbo',
-  GROQ_VISION_MODEL: process.env.GROQ_VISION_MODEL || 'llama-3.2-11b-vision-preview',
 
   // Groq Endpoints
   GROQ_URL: 'https://api.groq.com/openai/v1/chat/completions',
