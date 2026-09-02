@@ -13,9 +13,10 @@ async function runMiddlewareTests() {
     console.log('❌ Express app initialization failed.');
   }
 
-  console.log('\n2. Checking Config values...');
+  console.log('\n2. Checking Config values & Model Hierarchy...');
   console.log('Port:', config.PORT);
-  console.log('Groq Primary Model:', config.GROQ_MODEL);
+  console.log('Central Active Models Hierarchy:', config.getModelHierarchy());
+  console.log('Voice Model:', config.MODELS.VOICE_MODEL);
   console.log('Admin Numbers:', config.ADMIN_NUMBERS);
   console.log('GAS Secret Key configured:', !!config.GAS_API_SECRET);
 

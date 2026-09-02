@@ -1,20 +1,17 @@
 require('dotenv').config();
+const { MODEL_REGISTRY, getActiveModelHierarchy } = require('./models');
 
 const config = {
   PORT: process.env.PORT || 3000,
   
-  // Groq AI Multi-Agent Matrix (Sinkron 100% dengan Code.gs & Groq Console)
+  // Groq API Key & Endpoints
   GROQ_API_KEY: process.env.GROQ_API_KEY || '',
-  GROQ_MODEL: process.env.GROQ_MODEL || 'openai/gpt-oss-120b',
-  GROQ_BACKUP_MODEL: process.env.GROQ_BACKUP_MODEL || 'qwen/qwen3.8-27b',
-  GROQ_FAST_MODEL: process.env.GROQ_FAST_MODEL || 'openai/gpt-oss-20b',
-  GROQ_EXTRACTOR_MODEL: process.env.GROQ_EXTRACTOR_MODEL || 'qwen/qwen3.8-27b',
-  GROQ_ANALYST_MODEL: process.env.GROQ_ANALYST_MODEL || 'groq/compound',
-  GROQ_VOICE_MODEL: process.env.GROQ_VOICE_MODEL || 'whisper-large-v3-turbo',
-
-  // Groq Endpoints
   GROQ_URL: 'https://api.groq.com/openai/v1/chat/completions',
   GROQ_WHISPER_URL: 'https://api.groq.com/openai/v1/audio/transcriptions',
+
+  // Models Registry (Terpusat di src/models.js)
+  MODELS: MODEL_REGISTRY,
+  getModelHierarchy: getActiveModelHierarchy,
 
   // Fonnte WhatsApp Gateway
   FONNTE_API_KEY: process.env.FONNTE_API_KEY || '',

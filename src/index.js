@@ -18,8 +18,9 @@ app.use(morgan('dev'));
 app.get('/', (req, res) => {
   res.json({
     status: 'online',
-    service: 'Knowhere Studio AI WhatsApp Middleware',
-    model: config.GEMINI_MODEL,
+    service: 'Knowhere Studio AI WhatsApp Middleware (Groq Multi-Agent)',
+    primaryModel: config.MODELS.PRIMARY_MODEL,
+    activeModels: config.getModelHierarchy(),
     timestamp: new Date().toISOString()
   });
 });
@@ -38,8 +39,8 @@ app.get('/webhook', (req, res) => res.status(200).json({ status: true, message: 
 // 3. Direct Test API Endpoint (bisa digunakan untuk debug tanpa WhatsApp)
 app.post('/api/chat', async (req, res) => {
   try {
-    const { message, sender = '6282214578132', mediaUrl = null, isImage = false } = req.body;
-    const reply = await processMessageWithAI({ sender, message, mediaUrl, isImage });
+    const { message, sender = '6282214578132', mediaUrl = null, isImage = false, isAudio = false } = req.body;
+    const reply = await processMessageWithAI({ sender, message, mediaUrl, isImage, isAudio });
     res.json({ success: true, reply });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
@@ -63,7 +64,7 @@ if (process.env.NODE_ENV !== 'production' || !process.env.VERCEL) {
     console.log(`\n==================================================`);
     console.log(`🚀 KNOWHERE AI WHATSAPP MIDDLEWARE IS RUNNING!`);
     console.log(`📡 Port: ${config.PORT}`);
-    console.log(`🤖 AI Model: ${config.GEMINI_MODEL}`);
+    console.log(`🤖 Primary AI Model: ${config.MODELS.PRIMARY_MODEL}`);
     console.log(`🔗 Webhook URL: http://localhost:${config.PORT}/webhook/wa`);
     console.log(`==================================================\n`);
   });

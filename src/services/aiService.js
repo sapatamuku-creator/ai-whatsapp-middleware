@@ -11,6 +11,7 @@ TUGAS UTAMA:
 1. Membantu Klien & Admin mengelola jadwal booking, pencatatan pembayaran DP & pelunasan, pengecekan ketersediaan tanggal, dan pembuatan PDF invoice resmi secara otomatis.
 2. Menjalankan Tool Calling (Function Calling) yang sesuai untuk berinteraksi dengan Google Spreadsheet, Google Drive, Google Docs, dan Google Calendar melalui Headless GAS.
 3. Saat Klien / Admin mengirimkan foto bukti transfer dan meminta invoice, panggil tool 'generatePdfInvoice' atau 'updatePayment' dengan menyertakan bukti_url yang ada.
+4. Saat ditanya mengenai omset, rekap, atau jadwal yang akan datang, gunakan tool yang relevan (seperti 'getAllBookings', 'getUpcomingEvents', 'getMonthlyOmset', 'getPaymentSummary') lalu rangkum datanya dengan jelas, padat, dan akurat.
 
 FORMAT BALASAN:
 - Gunakan Bahasa Indonesia yang ramah, sopan, dan terstruktur.
@@ -19,7 +20,7 @@ FORMAT BALASAN:
 `;
 
 /**
- * Memory percakapan per user (In-Memory Map, max 12 turn)
+ * Memory percakapan per user (In-Memory Map, rolling window)
  */
 const userSessions = new Map();
 
@@ -35,12 +36,54 @@ function getSessionHistory(sender) {
 function appendToSession(sender, role, content, extra = {}) {
   const history = getSessionHistory(sender);
   history.push({ role, content, ...extra });
-  if (history.length > 14) {
+  
+  // Jaga ukuran history agar token tetap ramping dan tidak pernah 413
+  if (history.length > 8) {
+    const recent = history.slice(history.length - 6);
     userSessions.set(sender, [
       { role: 'system', content: SYSTEM_PROMPT },
-      ...history.slice(history.length - 10)
+      ...recent
     ]);
   }
+}
+
+/**
+ * Kompresi dan sanitasi hasil data dari Google Apps Script agar hemat token & anti Error 413
+ */
+function sanitizeAndCompressGasResult(gasResult) {
+  if (!gasResult) return JSON.stringify({ success: false, message: 'No data returned' });
+
+  // Jika berupa array data booking/event dalam jumlah banyak
+  if (Array.isArray(gasResult)) {
+    const trimmed = gasResult.map(row => {
+      if (typeof row === 'object' && row !== null) {
+        return {
+          nama: row.nama || row.Nama || row.name || row.client || '',
+          tanggal: row.tanggal || row.Tanggal || row.date || '',
+          layanan: row.layanan || row.Layanan || '',
+          paket: row.paket || row.Paket || '',
+          harga: Number(row.harga || row.Harga || row['Harga Paket'] || 0),
+          dpTotal: (Number(row.dp1 || row.DP1 || 0) + Number(row.dp2 || row.DP2 || 0) + Number(row.dp3 || row.DP3 || 0) + Number(row.dp4 || row.DP4 || 0)),
+          sisa: Number(row.sisa || row.Sisa || row['Sisa Pembayaran'] || 0),
+          status: row.status || row.Status || ''
+        };
+      }
+      return row;
+    });
+
+    const str = JSON.stringify(trimmed);
+    if (str.length > 15000) {
+      return str.substring(0, 15000) + '... (data diringkas)';
+    }
+    return str;
+  }
+
+  // Jika berupa objek tunggal
+  const str = JSON.stringify(gasResult);
+  if (str.length > 20000) {
+    return str.substring(0, 20000) + '... (data diringkas)';
+  }
+  return str;
 }
 
 /**
@@ -61,11 +104,11 @@ async function transcribeAudioGroq(audioUrl) {
     const formData = new FormData();
     const audioBlob = new Blob([audioResp.data], { type: 'audio/ogg' });
     formData.append('file', audioBlob, 'voice_note.ogg');
-    formData.append('model', config.GROQ_VOICE_MODEL || 'whisper-large-v3-turbo');
+    formData.append('model', config.MODELS.VOICE_MODEL);
     formData.append('language', 'id');
     formData.append('response_format', 'json');
 
-    console.log(`[GROQ_WHISPER] Mengirim ke Groq Whisper (${config.GROQ_VOICE_MODEL})...`);
+    console.log(`[GROQ_WHISPER] Mengirim ke Groq Whisper (${config.MODELS.VOICE_MODEL})...`);
     const res = await axios.post(config.GROQ_WHISPER_URL, formData, {
       headers: {
         'Authorization': `Bearer ${config.GROQ_API_KEY}`
@@ -86,23 +129,15 @@ async function transcribeAudioGroq(audioUrl) {
 }
 
 /**
- * Panggil Groq Chat Completion API dengan Auto-Failover Matrix resmi dari Groq Console
- * (openai/gpt-oss-120b -> qwen/qwen3.8-27b -> openai/gpt-oss-20b -> qwen/qwen3.6-27b)
+ * Panggil Groq Chat Completion API dengan Auto-Failover Matrix Terpusat (src/models.js)
  */
 async function callGroqChat(messages, tools = groqTools) {
   if (!config.GROQ_API_KEY) {
     throw new Error('GROQ_API_KEY belum dikonfigurasi di Environment Variables Vercel!');
   }
 
-  // Model hierarchy persis dari model yang aktif di Groq Console Anda
-  const modelHierarchy = [
-    config.GROQ_MODEL || 'openai/gpt-oss-120b',
-    config.GROQ_BACKUP_MODEL || 'qwen/qwen3.8-27b',
-    config.GROQ_FAST_MODEL || 'openai/gpt-oss-20b',
-    'qwen/qwen3.6-27b'
-  ];
-
-  const uniqueModels = [...new Set(modelHierarchy)];
+  // Mengambil urutan model terpusat dari src/models.js
+  const uniqueModels = config.getModelHierarchy();
 
   // Sanitizer: Hapus field internal yang ditolak
   const cleanMessages = messages.map(m => {
@@ -170,10 +205,8 @@ async function processMessageWithAI({ sender, message, mediaUrl, isImage, isAudi
     // 2. Handle Foto Bukti Transfer
     if (isImage && mediaUrl) {
       if (!promptContent.trim()) {
-        // Jika foto dikirim tanpa teks caption -> kirim panduan interaktif langsung
         return `📸 *Foto Bukti Transfer Berhasil Diterima!*\n\nSilakan balas dengan perintah invoice, contoh:\n👉 \`/invoice Kinnas ID dp1 500 ribu\`\n👉 \`/invoice Widya Dela Putri\`\n\n_NOVA akan otomatis mengunggah foto ini ke folder Drive klien & membuatkan Invoice PDF resmi!_ ✨`;
       } else {
-        // Jika ada teks/caption, sertakan mediaUrl ke context agar diteruskan ke tool generatePdfInvoice
         promptContent = `${promptContent}\n[Bukti Transfer URL: ${mediaUrl}]`;
       }
     }
@@ -226,16 +259,17 @@ async function processMessageWithAI({ sender, message, mediaUrl, isImage, isAudi
         console.log(`[EXECUTE_GAS_TOOL] "${toolName}" dengan args:`, JSON.stringify(toolArgs));
         
         // Panggil ke Google Apps Script (Headless API)
-        const gasResult = await callGasAction(toolName, toolArgs);
-        console.log(`[GAS_RESULT] "${toolName}":`, JSON.stringify(gasResult).substring(0, 200) + '...');
+        const rawGasResult = await callGasAction(toolName, toolArgs);
+        const compressedGasResult = sanitizeAndCompressGasResult(rawGasResult);
+        console.log(`[GAS_RESULT] "${toolName}" (Panjang payload: ${compressedGasResult.length} karakter)`);
 
-        // Tambahkan hasil tool ke context percakapan
+        // Tambahkan hasil tool yang sudah dikompresi ke context percakapan
         const historyRef = getSessionHistory(sender);
         historyRef.push({
           role: 'tool',
           tool_call_id: toolCall.id,
           name: toolName,
-          content: JSON.stringify(gasResult)
+          content: compressedGasResult
         });
       }
     }
