@@ -67,11 +67,62 @@ function getFormattedTools() {
  * Memory percakapan per user (In-Memory Map, max 8 turn)
  */
 const chatSessions = new Map();
+let resolvedModelName = null;
 
-function getOrCreateChatSession(sender) {
+/**
+ * Otomatis mengambil daftar model yang aktif & didukung oleh API Key pengguna dari Google AI Studio
+ */
+async function getAvailableModelName() {
+  if (resolvedModelName) return resolvedModelName;
+
+  try {
+    console.log('[AI_SERVICE] Menanyakan daftar model aktif ke Google AI Studio...');
+    const res = await axios.get(`https://generativelanguage.googleapis.com/v1beta/models?key=${config.GEMINI_API_KEY}`, { timeout: 10000 });
+    const models = res.data && Array.isArray(res.data.models) ? res.data.models : [];
+
+    // Filter model yang mendukung generateContent
+    const validModels = models
+      .filter(m => Array.isArray(m.supportedGenerationMethods) && m.supportedGenerationMethods.includes('generateContent'))
+      .map(m => m.name.replace(/^models\//, ''));
+
+    console.log('[AI_SERVICE] Model yang didukung API Key Anda:', validModels.join(', '));
+
+    // Cek preferensi dari config jika ada di list
+    if (config.GEMINI_MODEL && validModels.includes(config.GEMINI_MODEL)) {
+      resolvedModelName = config.GEMINI_MODEL;
+      return resolvedModelName;
+    }
+
+    // Urutan prioritas pemilihan model terbaik
+    const priority = [
+      validModels.find(m => m.includes('2.0') && m.includes('flash') && !m.includes('exp') && !m.includes('thinking')),
+      validModels.find(m => m.includes('1.5') && m.includes('flash') && !m.includes('8b')),
+      validModels.find(m => m.includes('flash')),
+      validModels.find(m => m.includes('gemini-2.0')),
+      validModels.find(m => m.includes('gemini-1.5')),
+      validModels.find(m => m.includes('gemini-pro') || m === 'gemini-pro'),
+      validModels[0]
+    ];
+
+    const selected = priority.find(Boolean);
+    if (selected) {
+      resolvedModelName = selected;
+      console.log(`[AI_SERVICE] Berhasil memilih model optimal: ${resolvedModelName}`);
+      return resolvedModelName;
+    }
+  } catch (err) {
+    console.warn('[AI_SERVICE] Gagal auto-detect model, menggunakan fallback:', err.message);
+  }
+
+  resolvedModelName = 'gemini-2.0-flash';
+  return resolvedModelName;
+}
+
+async function getOrCreateChatSession(sender) {
   if (!chatSessions.has(sender)) {
+    const activeModel = await getAvailableModelName();
     const model = genAI.getGenerativeModel({
-      model: config.GEMINI_MODEL || 'gemini-1.5-flash',
+      model: activeModel,
       systemInstruction: SYSTEM_PROMPT,
       tools: getFormattedTools()
     });
@@ -82,6 +133,7 @@ function getOrCreateChatSession(sender) {
 
     chatSessions.set(sender, {
       chat: chat,
+      modelName: activeModel,
       lastActive: Date.now()
     });
   }
@@ -93,80 +145,93 @@ function getOrCreateChatSession(sender) {
  * Jalankan AI Agentic Loop (Vision + Tool Calling)
  */
 async function processMessageWithAI({ sender, message, mediaUrl, isImage }) {
-  try {
-    const chat = getOrCreateChatSession(sender);
+  const executeChat = async (retryCount = 0) => {
+    try {
+      const chat = await getOrCreateChatSession(sender);
 
-    // Siapkan konten pesan (Multimodal)
-    const contentParts = [];
+      // Siapkan konten pesan (Multimodal)
+      const contentParts = [];
 
-    // Jika ada gambar lampiran dari WhatsApp
-    if (isImage && mediaUrl) {
-      console.log(`[AI_SERVICE] Memproses gambar dari URL: ${mediaUrl}`);
-      const imagePart = await fetchImageAsBase64(mediaUrl);
-      if (imagePart) {
-        contentParts.push(imagePart);
-        if (!message) {
-          contentParts.push("Tolong baca foto bukti transfer ini, catat pembayarannya, dan buatkan invoice resminya.");
+      // Jika ada gambar lampiran dari WhatsApp
+      if (isImage && mediaUrl) {
+        console.log(`[AI_SERVICE] Memproses gambar dari URL: ${mediaUrl}`);
+        const imagePart = await fetchImageAsBase64(mediaUrl);
+        if (imagePart) {
+          contentParts.push(imagePart);
+          if (!message) {
+            contentParts.push("Tolong baca foto bukti transfer ini, catat pembayarannya, dan buatkan invoice resminya.");
+          }
         }
       }
-    }
 
-    if (message) {
-      contentParts.push(message);
-    }
-
-    if (contentParts.length === 0) {
-      return "Halo! Ada yang bisa NOVA bantu untuk operasional Knowhere Studio hari ini?";
-    }
-
-    console.log(`[AI_SERVICE] Mengirim request ke Gemini (${config.GEMINI_MODEL})...`);
-    let response = await chat.sendMessage(contentParts);
-    let candidate = response.response.candidates[0];
-
-    // Agentic Loop: Handle function calls jika model memanggil tool
-    let loopCount = 0;
-    const maxLoops = 5;
-
-    while (candidate && candidate.content && candidate.content.parts && loopCount < maxLoops) {
-      const functionCalls = candidate.content.parts.filter(part => part.functionCall);
-      if (functionCalls.length === 0) {
-        break;
+      if (message) {
+        contentParts.push(message);
       }
 
-      loopCount++;
-      console.log(`[AI_SERVICE] Model memanggil ${functionCalls.length} tool(s) (Loop ${loopCount}/${maxLoops})`);
-
-      const functionResponses = [];
-
-      for (const fc of functionCalls) {
-        const toolName = fc.functionCall.name;
-        const toolArgs = fc.functionCall.args || {};
-
-        console.log(`[TOOL_CALL] Menjalankan tool "${toolName}" dengan args:`, JSON.stringify(toolArgs));
-        
-        // Panggil ke Headless GAS API
-        const gasResult = await callGasAction(toolName, toolArgs);
-        console.log(`[TOOL_RESULT] Hasil "${toolName}":`, JSON.stringify(gasResult).substring(0, 200) + '...');
-
-        functionResponses.push({
-          functionResponse: {
-            name: toolName,
-            response: gasResult
-          }
-        });
+      if (contentParts.length === 0) {
+        return "Halo! Ada yang bisa NOVA bantu untuk operasional Knowhere Studio hari ini?";
       }
 
-      // Kirim hasil tool kembali ke Gemini agar Gemini menyusun balasan akhir
-      response = await chat.sendMessage(functionResponses);
-      candidate = response.response.candidates[0];
-    }
+      console.log(`[AI_SERVICE] Mengirim request ke Gemini (${resolvedModelName || 'auto'})...`);
+      let response = await chat.sendMessage(contentParts);
+      let candidate = response.response.candidates[0];
 
-    const finalText = response.response.text();
-    return finalText;
-  } catch (error) {
-    console.error('[AI_SERVICE ERROR]:', error);
-    return `Maaf, terjadi kendala saat memproses permintaan Anda: ${error.message}`;
-  }
+      // Agentic Loop: Handle function calls jika model memanggil tool
+      let loopCount = 0;
+      const maxLoops = 5;
+
+      while (candidate && candidate.content && candidate.content.parts && loopCount < maxLoops) {
+        const functionCalls = candidate.content.parts.filter(part => part.functionCall);
+        if (functionCalls.length === 0) {
+          break;
+        }
+
+        loopCount++;
+        console.log(`[AI_SERVICE] Model memanggil ${functionCalls.length} tool(s) (Loop ${loopCount}/${maxLoops})`);
+
+        const functionResponses = [];
+
+        for (const fc of functionCalls) {
+          const toolName = fc.functionCall.name;
+          const toolArgs = fc.functionCall.args || {};
+
+          console.log(`[TOOL_CALL] Menjalankan tool "${toolName}" dengan args:`, JSON.stringify(toolArgs));
+          
+          // Panggil ke Headless GAS API
+          const gasResult = await callGasAction(toolName, toolArgs);
+          console.log(`[TOOL_RESULT] Hasil "${toolName}":`, JSON.stringify(gasResult).substring(0, 200) + '...');
+
+          functionResponses.push({
+            functionResponse: {
+              name: toolName,
+              response: gasResult
+            }
+          });
+        }
+
+        // Kirim hasil tool kembali ke Gemini agar Gemini menyusun balasan akhir
+        response = await chat.sendMessage(functionResponses);
+        candidate = response.response.candidates[0];
+      }
+
+      const finalText = response.response.text();
+      return finalText;
+    } catch (error) {
+      console.error(`[AI_SERVICE ERROR (Attempt ${retryCount + 1})]:`, error.message);
+      
+      // Jika terjadi error model 404 (model tidak ditemukan), reset cache dan coba model alternatif
+      if ((error.message.includes('404') || error.message.includes('not found') || error.message.includes('is not supported')) && retryCount < 2) {
+        console.warn(`[AI_SERVICE] Model saat ini mengalami kendala. Me-reset model cache dan mencoba model lain...`);
+        resolvedModelName = null;
+        chatSessions.delete(sender);
+        return await executeChat(retryCount + 1);
+      }
+
+      return `Maaf, terjadi kendala saat memproses permintaan Anda: ${error.message}`;
+    }
+  };
+
+  return await executeChat(0);
 }
 
 module.exports = {
