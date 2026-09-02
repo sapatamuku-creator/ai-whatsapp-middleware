@@ -3,16 +3,24 @@ require('dotenv').config();
 const config = {
   PORT: process.env.PORT || 3000,
   
-  // Gemini AI (Google API recommended: gemini-3.6-flash)
-  GEMINI_API_KEY: process.env.GEMINI_API_KEY || '',
-  GEMINI_MODEL: (process.env.GEMINI_MODEL && !['gemini-2.5-flash', 'gemini-1.5-flash'].includes(process.env.GEMINI_MODEL)) 
-    ? process.env.GEMINI_MODEL 
-    : 'gemini-3.6-flash',
+  // Groq AI Multi-Agent Matrix (Sinkron 100% dengan Code.gs)
+  GROQ_API_KEY: process.env.GROQ_API_KEY || '',
+  GROQ_MODEL: process.env.GROQ_MODEL || 'openai/gpt-oss-120b',
+  GROQ_BACKUP_MODEL: process.env.GROQ_BACKUP_MODEL || 'qwen/qwen3.8-27b',
+  GROQ_FAST_MODEL: process.env.GROQ_FAST_MODEL || 'openai/gpt-oss-20b',
+  GROQ_EXTRACTOR_MODEL: process.env.GROQ_EXTRACTOR_MODEL || 'qwen/qwen3.8-27b',
+  GROQ_ANALYST_MODEL: process.env.GROQ_ANALYST_MODEL || 'groq/compound',
+  GROQ_VOICE_MODEL: process.env.GROQ_VOICE_MODEL || 'whisper-large-v3-turbo',
+  GROQ_VISION_MODEL: process.env.GROQ_VISION_MODEL || 'llama-3.2-11b-vision-preview',
+
+  // Groq Endpoints
+  GROQ_URL: 'https://api.groq.com/openai/v1/chat/completions',
+  GROQ_WHISPER_URL: 'https://api.groq.com/openai/v1/audio/transcriptions',
 
   // Fonnte WhatsApp Gateway
   FONNTE_API_KEY: process.env.FONNTE_API_KEY || '',
   FONNTE_URL: 'https://api.fonnte.com/send',
-  ADMIN_NUMBERS: (process.env.ADMIN_NUMBERS || '6282214578132').split(',').map(n => n.trim()),
+  ADMIN_NUMBERS: (process.env.ADMIN_NUMBERS || '').split(',').map(n => n.trim().replace(/[^0-9]/g, '')).filter(Boolean),
 
   // Google Apps Script Headless API
   GAS_WEBAPP_URL: process.env.GAS_WEBAPP_URL || '',

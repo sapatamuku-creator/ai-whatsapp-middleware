@@ -15,13 +15,13 @@ async function runMiddlewareTests() {
 
   console.log('\n2. Checking Config values...');
   console.log('Port:', config.PORT);
-  console.log('AI Model:', config.GEMINI_MODEL);
+  console.log('Groq Primary Model:', config.GROQ_MODEL);
   console.log('Admin Numbers:', config.ADMIN_NUMBERS);
   console.log('GAS Secret Key configured:', !!config.GAS_API_SECRET);
 
   console.log('\n3. Checking Tools declarations...');
-  const { toolDeclarations } = require('../src/tools/definitions');
-  console.log(`✅ Loaded ${toolDeclarations.length} tool declarations:`);
+  const { toolDeclarations, groqTools } = require('../src/tools/definitions');
+  console.log(`✅ Loaded ${toolDeclarations.length} tool declarations (Groq tools: ${groqTools.length}):`);
   toolDeclarations.forEach(t => console.log(`   - ${t.name}`));
 
   console.log('\n========================================');

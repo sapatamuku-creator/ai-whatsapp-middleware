@@ -145,4 +145,27 @@ const toolDeclarations = [
   }
 ];
 
-module.exports = { toolDeclarations };
+// Konversi toolDeclarations ke format standard OpenAI/Groq Tool Calling
+const groqTools = toolDeclarations.map(t => ({
+  type: "function",
+  function: {
+    name: t.name,
+    description: t.description,
+    parameters: {
+      type: "object",
+      properties: Object.fromEntries(
+        Object.entries(t.parameters.properties || {}).map(([k, v]) => [
+          k,
+          {
+            type: (v.type || 'string').toLowerCase(),
+            description: v.description
+          }
+        ])
+      ),
+      required: t.parameters.required || []
+    }
+  }
+}));
+
+module.exports = { toolDeclarations, groqTools };
+

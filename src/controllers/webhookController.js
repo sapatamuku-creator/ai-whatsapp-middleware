@@ -39,21 +39,22 @@ async function handleFonnteWebhook(req, res) {
       message = rawMsg.trim();
     }
 
-    const isImage = !!mediaUrl && !/\.(ogg|mp3|wav|m4a|opus)(\?.*)?$/i.test(mediaUrl);
+    const isAudio = !!mediaUrl && /\.(ogg|mp3|wav|m4a|opus)(\?.*)?$/i.test(mediaUrl) || (body.audio && !!mediaUrl);
+    const isImage = !!mediaUrl && !isAudio;
 
     console.log(`\n========================================`);
     console.log(`[INCOMING WHATSAPP] From: ${cleanSender} (${name || 'Customer'})`);
     console.log(`Message: "${message}"`);
-    if (mediaUrl) console.log(`Media URL: ${mediaUrl} (isImage: ${isImage})`);
+    if (mediaUrl) console.log(`Media URL: ${mediaUrl} (isImage: ${isImage}, isAudio: ${isAudio})`);
     console.log(`========================================\n`);
 
-    // Jalankan pemrosesan AI Multimodal + Tool Calling
-    // Di Vercel Serverless, proses ini WAJIB diawait SEBELUM res.json agar runtime tidak di-freeze oleh Vercel
+    // Jalankan pemrosesan Groq Multi-Agent + Tool Calling
     const replyText = await processMessageWithAI({
       sender: cleanSender,
       message: message,
       mediaUrl: mediaUrl,
-      isImage: isImage
+      isImage: isImage,
+      isAudio: isAudio
     });
 
     console.log(`[AI RESPONSE READY] Mengirimkan balasan ke ${cleanSender}...`);
