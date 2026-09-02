@@ -28,9 +28,12 @@ app.get('/health', (req, res) => {
   res.status(200).json({ status: 'ok', uptime: process.uptime() });
 });
 
-// 2. Fonnte Webhook Endpoint
+// 2. Fonnte Webhook Endpoint (Supports both POST for data and GET for verification)
 app.post('/webhook/wa', handleFonnteWebhook);
+app.get('/webhook/wa', (req, res) => res.status(200).json({ status: true, message: 'Fonnte webhook endpoint ready (GET)' }));
 app.post('/webhook', handleFonnteWebhook);
+app.get('/webhook', (req, res) => res.status(200).json({ status: true, message: 'Fonnte webhook endpoint ready (GET)' }));
+
 
 // 3. Direct Test API Endpoint (bisa digunakan untuk debug tanpa WhatsApp)
 app.post('/api/chat', async (req, res) => {
