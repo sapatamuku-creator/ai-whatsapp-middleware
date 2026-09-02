@@ -1,0 +1,28 @@
+{
+  "name": "ai-whatsapp-middleware",
+  "version": "1.0.0",
+  "description": "AI Gateway & Middleware with Gemini 2.5 Flash Vision OCR & Tool Calling for Knowhere Studio",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "test": "node tests/test_middleware.js"
+  },
+  "dependencies": {
+    "@google/generative-ai": "^0.24.0",
+    "axios": "^1.7.9",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "morgan": "^1.10.0"
+  },
+  "keywords": [
+    "whatsapp",
+    "gemini",
+    "vision-ocr",
+    "google-apps-script",
+    "automation"
+  ],
+  "author": "Knowhere Studio",
+  "license": "MIT"
+}
