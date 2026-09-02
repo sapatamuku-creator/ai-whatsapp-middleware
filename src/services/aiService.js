@@ -71,7 +71,7 @@ const chatSessions = new Map();
 function getOrCreateChatSession(sender) {
   if (!chatSessions.has(sender)) {
     const model = genAI.getGenerativeModel({
-      model: config.GEMINI_MODEL || 'gemini-2.5-flash',
+      model: config.GEMINI_MODEL || 'gemini-1.5-flash',
       systemInstruction: SYSTEM_PROMPT,
       tools: getFormattedTools()
     });

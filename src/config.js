@@ -5,7 +5,9 @@ const config = {
   
   // Gemini AI
   GEMINI_API_KEY: process.env.GEMINI_API_KEY || '',
-  GEMINI_MODEL: process.env.GEMINI_MODEL || 'gemini-2.5-flash',
+  GEMINI_MODEL: (process.env.GEMINI_MODEL && process.env.GEMINI_MODEL !== 'gemini-2.5-flash') 
+    ? process.env.GEMINI_MODEL 
+    : 'gemini-1.5-flash',
 
   // Fonnte WhatsApp Gateway
   FONNTE_API_KEY: process.env.FONNTE_API_KEY || '',
