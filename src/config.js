@@ -3,11 +3,11 @@ require('dotenv').config();
 const config = {
   PORT: process.env.PORT || 3000,
   
-  // Gemini AI
+  // Gemini AI (Google API recommended: gemini-3.6-flash)
   GEMINI_API_KEY: process.env.GEMINI_API_KEY || '',
-  GEMINI_MODEL: (process.env.GEMINI_MODEL && process.env.GEMINI_MODEL !== 'gemini-2.5-flash') 
+  GEMINI_MODEL: (process.env.GEMINI_MODEL && !['gemini-2.5-flash', 'gemini-1.5-flash'].includes(process.env.GEMINI_MODEL)) 
     ? process.env.GEMINI_MODEL 
-    : 'gemini-1.5-flash',
+    : 'gemini-3.6-flash',
 
   // Fonnte WhatsApp Gateway
   FONNTE_API_KEY: process.env.FONNTE_API_KEY || '',

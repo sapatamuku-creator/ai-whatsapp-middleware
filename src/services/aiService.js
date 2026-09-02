@@ -68,38 +68,41 @@ function getFormattedTools() {
  */
 const chatSessions = new Map();
 let resolvedModelName = null;
+const blacklistedModels = new Set(['gemini-2.5-flash', 'gemini-1.5-flash']);
 
 /**
  * Otomatis mengambil daftar model yang aktif & didukung oleh API Key pengguna dari Google AI Studio
  */
 async function getAvailableModelName() {
-  if (resolvedModelName) return resolvedModelName;
+  if (resolvedModelName && !blacklistedModels.has(resolvedModelName)) return resolvedModelName;
 
   try {
     console.log('[AI_SERVICE] Menanyakan daftar model aktif ke Google AI Studio...');
     const res = await axios.get(`https://generativelanguage.googleapis.com/v1beta/models?key=${config.GEMINI_API_KEY}`, { timeout: 10000 });
     const models = res.data && Array.isArray(res.data.models) ? res.data.models : [];
 
-    // Filter model yang mendukung generateContent
+    // Filter model yang mendukung generateContent dan tidak di-blacklist
     const validModels = models
       .filter(m => Array.isArray(m.supportedGenerationMethods) && m.supportedGenerationMethods.includes('generateContent'))
-      .map(m => m.name.replace(/^models\//, ''));
+      .map(m => m.name.replace(/^models\//, ''))
+      .filter(m => !blacklistedModels.has(m));
 
     console.log('[AI_SERVICE] Model yang didukung API Key Anda:', validModels.join(', '));
 
-    // Cek preferensi dari config jika ada di list
-    if (config.GEMINI_MODEL && validModels.includes(config.GEMINI_MODEL)) {
+    // Cek preferensi dari config jika ada di list dan bukan blacklist
+    if (config.GEMINI_MODEL && validModels.includes(config.GEMINI_MODEL) && !blacklistedModels.has(config.GEMINI_MODEL)) {
       resolvedModelName = config.GEMINI_MODEL;
       return resolvedModelName;
     }
 
-    // Urutan prioritas pemilihan model terbaik
+    // Urutan prioritas pemilihan model terbaik (Google 3.x / 2.x)
     const priority = [
-      validModels.find(m => m.includes('2.0') && m.includes('flash') && !m.includes('exp') && !m.includes('thinking')),
-      validModels.find(m => m.includes('1.5') && m.includes('flash') && !m.includes('8b')),
+      validModels.find(m => m.includes('3.6') && m.includes('flash')),
+      validModels.find(m => m.includes('3.') && m.includes('flash')),
+      validModels.find(m => m.includes('2.0') && m.includes('flash') && !m.includes('exp')),
       validModels.find(m => m.includes('flash')),
-      validModels.find(m => m.includes('gemini-2.0')),
-      validModels.find(m => m.includes('gemini-1.5')),
+      validModels.find(m => m.includes('gemini-3.')),
+      validModels.find(m => m.includes('gemini-2.')),
       validModels.find(m => m.includes('gemini-pro') || m === 'gemini-pro'),
       validModels[0]
     ];
@@ -114,7 +117,7 @@ async function getAvailableModelName() {
     console.warn('[AI_SERVICE] Gagal auto-detect model, menggunakan fallback:', err.message);
   }
 
-  resolvedModelName = 'gemini-2.0-flash';
+  resolvedModelName = 'gemini-3.6-flash';
   return resolvedModelName;
 }
 
@@ -220,8 +223,11 @@ async function processMessageWithAI({ sender, message, mediaUrl, isImage }) {
       console.error(`[AI_SERVICE ERROR (Attempt ${retryCount + 1})]:`, error.message);
       
       // Jika terjadi error model 404 (model tidak ditemukan), reset cache dan coba model alternatif
-      if ((error.message.includes('404') || error.message.includes('not found') || error.message.includes('is not supported')) && retryCount < 2) {
-        console.warn(`[AI_SERVICE] Model saat ini mengalami kendala. Me-reset model cache dan mencoba model lain...`);
+      if ((error.message.includes('404') || error.message.includes('not found') || error.message.includes('is not supported')) && retryCount < 3) {
+        console.warn(`[AI_SERVICE] Model "${resolvedModelName}" mengalami kendala. Me-blacklist dan mencoba model alternatif...`);
+        if (resolvedModelName) {
+          blacklistedModels.add(resolvedModelName);
+        }
         resolvedModelName = null;
         chatSessions.delete(sender);
         return await executeChat(retryCount + 1);
