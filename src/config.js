@@ -13,10 +13,24 @@ const config = {
   MODELS: MODEL_REGISTRY,
   getModelHierarchy: getActiveModelHierarchy,
 
-  // Fonnte WhatsApp Gateway
+  // Fonnte WhatsApp Gateway & Access Control
   FONNTE_API_KEY: process.env.FONNTE_API_KEY || '',
   FONNTE_URL: 'https://api.fonnte.com/send',
-  ADMIN_NUMBERS: (process.env.ADMIN_NUMBERS || '').split(',').map(n => n.trim().replace(/[^0-9]/g, '')).filter(Boolean),
+  PERSONAL_ADMIN_NUMBER: process.env.PERSONAL_ADMIN_NUMBER || '6282214578132',
+  VENDOR_ADMIN_NUMBER: process.env.VENDOR_ADMIN_NUMBER || '6287864752163',
+  ADMIN_NUMBERS: (process.env.ADMIN_NUMBERS || '6282214578132').split(',').map(n => n.trim().replace(/[^0-9]/g, '')).filter(Boolean),
+
+  // Jam Kerja Operasional Admin (WIB)
+  WORK_START_HOUR_WIB: 7,  // 07.00 WIB
+  WORK_END_HOUR_WIB: 17,   // 17.00 WIB
+
+  // Rekening Resmi Knowhere Studio (Untuk DP Klien Publik)
+  BANK_ACCOUNTS: [
+    { bank: 'BCA', norek: '7746263472', atasNama: 'Gildan Novianto Syahrir Sobirin' },
+    { bank: 'BRI', norek: '428201014655530', atasNama: 'Gildan novianto Syahrir S.' }
+  ],
+  DEFAULT_DP_AMOUNT: 500000,
+  OFFICIAL_WEBSITE_URL: 'https://sapatamu.id/vendor/knowhere-studio',
 
   // Google Apps Script Headless API
   GAS_WEBAPP_URL: process.env.GAS_WEBAPP_URL || '',

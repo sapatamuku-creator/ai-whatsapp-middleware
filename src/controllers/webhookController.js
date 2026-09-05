@@ -1,5 +1,6 @@
 const { processMessageWithAI } = require('../services/aiService');
 const { sendWhatsAppMessage } = require('../services/fonnteService');
+const { isWorkingHoursWIB, formatCurrentDateTimeWIB } = require('../utils/timeHelper');
 const config = require('../config');
 
 /**
@@ -31,6 +32,28 @@ async function handleFonnteWebhook(req, res) {
       return res.status(200).json({ status: false, message: 'Invalid sender' });
     }
 
+    // Tentukan hak akses: Super Admin Pribadi vs Publik
+    const isSuperAdmin = cleanSender === config.PERSONAL_ADMIN_NUMBER;
+    const nowWorkingHours = isWorkingHoursWIB();
+    const wibFormatted = formatCurrentDateTimeWIB();
+
+    console.log(`\n========================================`);
+    console.log(`[INCOMING WHATSAPP] From: ${cleanSender} (${name || 'Customer'})`);
+    console.log(`[ACCESS CHECK] isSuperAdmin: ${isSuperAdmin}, Waktu: ${wibFormatted}, Jam Kerja: ${nowWorkingHours}`);
+
+    // GATEKEEPER 1: Klien Publik di Jam Kerja (07.00 - 17.00 WIB)
+    // AI DILARANG MEMBALAS. Silent Drop karena sepenuhnya ditangani oleh Admin Manusia.
+    if (!isSuperAdmin && nowWorkingHours) {
+      console.log(`[SILENT DROP] Klien publik ${cleanSender} masuk di jam kerja operasional (07.00 - 17.00 WIB). AI tidak membalas.`);
+      console.log(`========================================\n`);
+      return res.status(200).json({
+        status: true,
+        message: 'Jam operasional kerja (07.00 - 17.00 WIB): Ditangani langsung oleh Admin Manusia',
+        ignored: true,
+        sender: cleanSender
+      });
+    }
+
     // Tentukan isi teks pesan (prioritaskan caption jika gambar ber-caption)
     let message = '';
     if (rawCaption && rawCaption.trim()) {
@@ -42,20 +65,28 @@ async function handleFonnteWebhook(req, res) {
     const isAudio = !!mediaUrl && /\.(ogg|mp3|wav|m4a|opus)(\?.*)?$/i.test(mediaUrl) || (body.audio && !!mediaUrl);
     const isImage = !!mediaUrl && !isAudio;
 
-    console.log(`\n========================================`);
-    console.log(`[INCOMING WHATSAPP] From: ${cleanSender} (${name || 'Customer'})`);
     console.log(`Message: "${message}"`);
     if (mediaUrl) console.log(`Media URL: ${mediaUrl} (isImage: ${isImage}, isAudio: ${isAudio})`);
     console.log(`========================================\n`);
 
-    // Jalankan pemrosesan Groq Multi-Agent + Tool Calling
+    // Jalankan pemrosesan Groq AI (Isolasi Mode Admin vs Publik)
     const replyText = await processMessageWithAI({
       sender: cleanSender,
       message: message,
       mediaUrl: mediaUrl,
       isImage: isImage,
-      isAudio: isAudio
+      isAudio: isAudio,
+      isAdmin: isSuperAdmin,
+      senderName: name
     });
+
+    if (!replyText || !replyText.trim()) {
+      return res.status(200).json({
+        status: true,
+        message: 'No response required or silently processed',
+        sender: cleanSender
+      });
+    }
 
     console.log(`[AI RESPONSE READY] Mengirimkan balasan ke ${cleanSender}...`);
     const sendResult = await sendWhatsAppMessage(cleanSender, replyText);

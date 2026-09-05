@@ -80,7 +80,32 @@ Sistem membutuhkan AI WhatsApp Gateway yang:
 
 ---
 
-### 5. Panduan Maintenance & Git Workflow untuk Masa Depan
+## 📌 ADR-002: Access Control, Whitelist Formulir Booking, & Isolasi Headless GAS
+
+### 1. Konteks & Latar Belakang
+Pasca deploy, ditemukan bahwa bot merespons seluruh nomor publik tanpa batasan jam kerja dan mengekspos pemanggilan tool headless Google Apps Script (`addBooking`, `updatePayment`, `generatePdfInvoice`, dll.) kepada pengirim luar. Hal ini berpotensi membocorkan privasi data klien dan merusak data transaksi jika tidak dibatasi.
+
+### 2. Keputusan Arsitektur
+1. **Hak Akses Eksklusif Super Admin (`6282214578132`)**:
+   - Aktif 24/7 non-stop dengan tool calling penuh ke Headless Google Apps Script (`groqTools`).
+   - Menggunakan persona internal `SYSTEM_PROMPT_ADMIN`.
+2. **Silent Drop Klien Publik di Jam Kerja (07.00 – 17.00 WIB)**:
+   - Seluruh pesan dari nomor selain Super Admin yang masuk di antara pukul 07.00 s/d 16.59:59 WIB di-*silent drop* (HTTP 200 tanpa panggil Groq AI dan tanpa kirim balasan Fonnte).
+   - Penanganan chat publik di jam kerja diserahkan 100% kepada Admin Manusia secara langsung.
+3. **Guarded Whitelist di Luar Jam Kerja (17.00 – 07.00 WIB)**:
+   - Publik dilayani oleh persona `SYSTEM_PROMPT_PUBLIC` dengan **zero tool calling (`tools: []`)**.
+   - Jawaban harga wajib tunduk 100% pada master katalog resmi dan tautan `https://sapatamu.id/vendor/knowhere-studio`.
+   - Seluruh balasan publik menyematkan footer `\n\n_(NOVA AGENT)_`.
+4. **Alur Pemesanan & Pembayaran DP Rp 500.000**:
+   - Jika klien publik ingin memesan slot acara, bot memberikan format formulir pemesanan dan mewajibkan pembayaran DP Rp 500.000 ke rekening resmi:
+     - BCA: `7746263472` a/n Gildan Novianto Syahrir Sobirin
+     - BRI: `428201014655530` a/n Gildan novianto Syahrir S.
+   - Saat klien mengirim formulir atau bukti transfer, bot **TIDAK** memanggil `addBooking` ke spreadsheet, melainkan otomatis mem-forward data ke nomor WhatsApp Super Admin (`6282214578132`) untuk ditinjau secara manual.
+   - Balasan ke klien menegaskan bahwa data telah diterima dan akan diverifikasi serta di-input oleh admin di jam kerja.
+
+---
+
+### 3. Panduan Maintenance & Git Workflow untuk Masa Depan
 
 Jika di kemudian hari Anda bekerja langsung dari folder root:
 `D:\Google Antigrafity\AI WhatsApp Assistant & Automation Client Database`
@@ -92,7 +117,7 @@ cd server
 
 # Lakukan git commit & push
 git add .
-git commit -m "update: perbaikan fitur"
+git commit -m "feat: access control & headless tool isolation"
 git push origin main
 ```
 *(Vercel akan otomatis mendeteksi push pada branch `main` dan me-redeploy server secara instan).*
