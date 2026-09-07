@@ -4,6 +4,7 @@ const { groqTools } = require('../tools/definitions');
 const { callGasAction } = require('./gasClient');
 const { sendWhatsAppMessage } = require('./fonnteService');
 const { formatCurrentDateTimeWIB } = require('../utils/timeHelper');
+const { extractDateFromText } = require('../utils/dateHelper');
 
 // ============================================
 // SYSTEM PROMPTS (ISOLASI ADMIN vs PUBLIK)
@@ -11,17 +12,36 @@ const { formatCurrentDateTimeWIB } = require('../utils/timeHelper');
 
 const SYSTEM_PROMPT_ADMIN = `
 Kamu adalah NOVA, Executive AI Business Assistant untuk Knowhere Studio (vendor dokumentasi pernikahan & fotografi profesional di Bandung).
-Kamu saat ini sedang berkomunikasi langsung dengan SUPER ADMIN / PEMILIK PRIBADI Knowhere Studio.
+Kamu saat ini sedang berkomunikasi langsung dengan SUPER ADMIN / PEMILIK PRIBADI Knowhere Studio via WhatsApp.
 
-HAK AKSES:
-- Kamu memiliki akses 24/7 penuh dan tidak terbatas ke seluruh tools database headless Google Apps Script (GAS).
-- Kamu berhak menjalankan Tool Calling untuk cek omset ('getMonthlyOmset'), tambah booking ('addBooking'), update pembayaran DP/pelunasan ('updatePayment'), cek rincian bayar ('getPaymentSummary'), buat invoice PDF resmi ('generatePdfInvoice'), dan sinkronisasi Google Calendar/Drive.
-- Saat Super Admin mengirimkan foto bukti transfer dan meminta invoice atau update pembayaran, segera panggil tool yang relevan dengan parameter bukti_url yang tersedia.
+HAK AKSES & KEMAMPUAN:
+- Akses 24/7 penuh ke seluruh tools database headless Google Apps Script (GAS).
+- Tool Calling tersedia: 'getMonthlyOmset', 'addBooking', 'updatePayment', 'getPaymentSummary', 'generatePdfInvoice', 'createClientDriveFolder', 'syncGoogleCalendar', 'getBookingByName', 'getAllBookings', 'checkBookingConflict', 'getUpcomingEvents', 'getUnpaidClients'.
+- Saat Super Admin mengirimkan foto bukti transfer, sertakan parameter bukti_url yang tersedia.
+
+ATURAN MUTLAK INTEGRITAS DATA & ANTI-HALUSINASI (ZERO TOLERANCE):
+1. VALIDASI TANGGAL ACARA:
+   - Jika Super Admin menyebutkan tanggal tertentu (misal: "tanggal 6 September 2026"):
+     WAJIB sertakan parameter 'tanggal' saat memanggil tool (createClientDriveFolder, syncGoogleCalendar, generatePdfInvoice, updatePayment, getBookingByName).
+   - Setelah menerima hasil eksekusi tool, PERIKSA KEMBALI apakah tanggal pada hasil tool (nama folder, tanggal booking, dll) SESUAI dengan tanggal yang diminta Admin.
+   - JANGAN PERNAH menyatakan "berhasil dibuat dengan tanggal yang tepat" atau "terkait acara tanggal X" jika folder / data dari tool memiliki tanggal yang BERBEDA dari instruksi Admin!
+   - Jika data di spreadsheet tidak cocok tanggalnya (misal: di DB tercatat 12 April 2026, tetapi Admin minta 6 September 2026):
+     BERKATA JUJUR DAN LUGAS! Beritahukan:
+     "⚠️ Di database spreadsheet, data booking atas nama *[Nama]* tercatat untuk tanggal *[Tanggal di DB]*, bukan *[Tanggal yang diminta]*. Apakah tanggal di spreadsheet perlu diupdate terlebih dahulu, atau ingin dibuatkan booking baru?"
+   - DILARANG KERAS memalsukan atau mengklaim tanggal sudah sesuai jika kenyataannya berbeda!
+
+2. PENANGANAN KOREKSI ADMIN ("Itu bukan tanggal X"):
+   - Jika Admin mengoreksi tanggal (contoh: "Itu bukan tanggal 6 September"):
+     JANGAN mengulang pemanggilan pembuatan folder yang sama!
+     Gunakan 'getBookingByName' untuk memverifikasi data riil di spreadsheet dan jelaskan fakta yang sebenarnya tercatat kepada Admin.
+
+3. MULTIPLE BOOKINGS / AMBIGUITAS:
+   - Jika satu klien memiliki beberapa jadwal acara dan Admin tidak menyebutkan tanggal spesifik, mintakan konfirmasi tanggal mana yang dimaksud sebelum mengambil tindakan.
 
 FORMAT BALASAN:
-- Bahasa Indonesia yang profesional, padat, lugas, dan terstruktur.
+- Bahasa Indonesia yang profesional, padat, lugas, santun, dan terstruktur.
 - Format WhatsApp: *tebal*, _miring_, emoji yang relevan.
-- Selalu sertakan link Google Drive PDF Invoice dan Folder Klien jika tersedia dari hasil tool.
+- Selalu sertakan link Google Drive PDF Invoice dan Folder Klien jika tersedia dari hasil tool yang valid.
 `;
 
 const SYSTEM_PROMPT_PUBLIC = `
@@ -398,6 +418,16 @@ async function processMessageWithAI({ sender, message, mediaUrl, isImage, isAudi
 
         if (isImage && mediaUrl && !toolArgs.bukti_url) {
           toolArgs.bukti_url = mediaUrl;
+        }
+
+        // Safety Net: Otomatis ekstrak tanggal dari prompt jika tool membutuhkan tanggal namun argumen tanggal kosong
+        const dateAwareTools = ['createClientDriveFolder', 'syncGoogleCalendar', 'generatePdfInvoice', 'getPaymentSummary', 'getBookingByName', 'updatePayment'];
+        if (dateAwareTools.includes(toolName) && !toolArgs.tanggal) {
+          const extractedDate = extractDateFromText(promptContent);
+          if (extractedDate) {
+            toolArgs.tanggal = extractedDate;
+            console.log(`[DATE_SAFETY_NET] Berhasil menyematkan parameter tanggal "${extractedDate}" ke tool "${toolName}"`);
+          }
         }
 
         console.log(`[EXECUTE_GAS_TOOL] "${toolName}" dengan args:`, JSON.stringify(toolArgs));

@@ -34,7 +34,8 @@ const toolDeclarations = [
         nominal: { type: "NUMBER", description: "Nominal pembayaran dalam angka bulat (contoh: 500000)" },
         stage: { type: "STRING", description: "Tahap pembayaran: 'dp1', 'dp2', 'dp3', 'dp4', atau 'pelunasan'" },
         catatan: { type: "STRING", description: "Catatan atau keterangan pembayaran (misal nama rekening pengirim)" },
-        bukti_url: { type: "STRING", description: "URL bukti transfer yang diunggah" }
+        bukti_url: { type: "STRING", description: "URL bukti transfer yang diunggah" },
+        tanggal: { type: "STRING", description: "Tanggal acara klien (opsional, gunakan jika klien memiliki beberapa tanggal acara atau ingin mempersempit pencarian)" }
       },
       required: ["nama", "nominal"]
     }
@@ -45,7 +46,8 @@ const toolDeclarations = [
     parameters: {
       type: "OBJECT",
       properties: {
-        nama: { type: "STRING", description: "Nama klien yang ingin dicek pembayarannya" }
+        nama: { type: "STRING", description: "Nama klien yang ingin dicek pembayarannya" },
+        tanggal: { type: "STRING", description: "Tanggal acara spesifik (opsional, gunakan jika klien memiliki beberapa tanggal acara)" }
       },
       required: ["nama"]
     }
@@ -57,6 +59,7 @@ const toolDeclarations = [
       type: "OBJECT",
       properties: {
         nama: { type: "STRING", description: "Nama klien yang ingin dibuatkan invoicenya" },
+        tanggal: { type: "STRING", description: "Tanggal acara spesifik klien (opsional, gunakan jika klien memiliki beberapa tanggal acara)" },
         bukti_url: { type: "STRING", description: "URL foto bukti transfer dari WhatsApp atau Google Drive (opsional)" }
       },
       required: ["nama"]
@@ -64,11 +67,12 @@ const toolDeclarations = [
   },
   {
     name: "getBookingByName",
-    description: "Mencari data detail booking klien berdasarkan nama.",
+    description: "Mencari data detail booking klien berdasarkan nama atau kata kunci, dengan filter tanggal opsional.",
     parameters: {
       type: "OBJECT",
       properties: {
-        nama: { type: "STRING", description: "Nama klien yang dicari" }
+        nama: { type: "STRING", description: "Nama klien yang dicari" },
+        tanggal: { type: "STRING", description: "Tanggal acara spesifik untuk menyaring jika ada beberapa booking (opsional)" }
       },
       required: ["nama"]
     }
@@ -123,22 +127,24 @@ const toolDeclarations = [
   },
   {
     name: "syncGoogleCalendar",
-    description: "Menyinkronkan jadwal acara klien ke Google Calendar Knowhere Studio.",
+    description: "Menyinkronkan jadwal acara klien ke Google Calendar Knowhere Studio. Wajib sertakan parameter 'tanggal' jika user menyebutkan tanggal tertentu atau jika klien memiliki lebih dari satu jadwal.",
     parameters: {
       type: "OBJECT",
       properties: {
-        nama: { type: "STRING", description: "Nama klien yang ingin disinkronkan ke kalender" }
+        nama: { type: "STRING", description: "Nama klien yang ingin disinkronkan ke kalender" },
+        tanggal: { type: "STRING", description: "Tanggal acara spesifik (contoh: '23/09/2026' atau '6 September 2026')" }
       },
       required: ["nama"]
     }
   },
   {
     name: "createClientDriveFolder",
-    description: "Membuat struktur folder Google Drive lengkap untuk klien (Raw Photos, Edited Photos, Video Cinematic, Invoice & Contract).",
+    description: "Membuat struktur folder Google Drive lengkap untuk klien (Raw Photos, Edited Photos, Video Cinematic, Invoice & Contract). Jika user menyebutkan tanggal tertentu atau klien memiliki beberapa tanggal acara, WAJIB sertakan parameter 'tanggal'.",
     parameters: {
       type: "OBJECT",
       properties: {
-        nama: { type: "STRING", description: "Nama klien" }
+        nama: { type: "STRING", description: "Nama klien atau nama pemesan" },
+        tanggal: { type: "STRING", description: "Tanggal acara (format: DD/MM/YYYY atau teks seperti '6 September 2026'). Wajib disertakan jika user menyebutkan tanggal tertentu." }
       },
       required: ["nama"]
     }
