@@ -408,6 +408,53 @@ async function callGroqChat(messages, tools = []) {
 }
 
 /**
+ * Helper untuk mem-parsing argumen fungsi dari format JSON, XML <parameter>, atau key-value
+ */
+function parseRawFunctionArgs(rawArgs) {
+  if (!rawArgs || !rawArgs.trim()) return {};
+  const trimmed = rawArgs.trim();
+
+  // 1. Coba JSON langsung
+  try {
+    const parsed = JSON.parse(trimmed);
+    if (typeof parsed === 'object' && parsed !== null) return parsed;
+  } catch (e) {}
+
+  const args = {};
+
+  // 2. Cek format parameter XML: <parameter=nama>nilai</parameter> atau <parameter name="nama">nilai</parameter>
+  const paramRegex = /<parameter(?:=|\s+name=["']?)([^>"'\s]+)["']?>([\s\S]*?)<\/parameter>/gi;
+  let pMatch;
+  let hasParam = false;
+  while ((pMatch = paramRegex.exec(trimmed)) !== null) {
+    hasParam = true;
+    const key = pMatch[1].trim();
+    let val = pMatch[2].trim();
+    if (val === 'true') val = true;
+    else if (val === 'false') val = false;
+    else if (/^\d+$/.test(val)) val = Number(val);
+    args[key] = val;
+  }
+  if (hasParam) return args;
+
+  // 3. Cek format key: value atau key=value per baris
+  const lines = trimmed.split('\n');
+  for (const line of lines) {
+    const kvMatch = line.match(/^([a-zA-Z0-9_]+)\s*[:=]\s*(.+)$/);
+    if (kvMatch) {
+      const key = kvMatch[1].trim();
+      let val = kvMatch[2].trim().replace(/^["']|["']$/g, '');
+      if (val === 'true') val = true;
+      else if (val === 'false') val = false;
+      else if (/^\d+$/.test(val)) val = Number(val);
+      args[key] = val;
+    }
+  }
+
+  return args;
+}
+
+/**
  * Mengekstrak tool calls jika model mengembalikan format XML/teks (<tool_call> ... </tool_call>)
  * alih-alih array message.tool_calls standar, serta mensterilkan tag XML agar tidak bocor ke WhatsApp.
  */
@@ -429,15 +476,7 @@ function extractToolCallsFromContent(message) {
   let match;
   while ((match = xmlFuncRegex.exec(content)) !== null) {
     const toolName = match[1].trim();
-    let toolArgs = {};
-    const rawArgs = match[2].trim();
-    if (rawArgs) {
-      try {
-        toolArgs = JSON.parse(rawArgs);
-      } catch (e) {
-        toolArgs = {};
-      }
-    }
+    const toolArgs = parseRawFunctionArgs(match[2]);
     parsedToolCalls.push({
       id: 'call_' + Math.random().toString(36).substring(2, 9),
       type: 'function',
@@ -475,13 +514,7 @@ function extractToolCallsFromContent(message) {
     let soloMatch;
     while ((soloMatch = soloFuncRegex.exec(content)) !== null) {
       const toolName = soloMatch[1].trim();
-      let toolArgs = {};
-      const rawArgs = soloMatch[2].trim();
-      if (rawArgs) {
-        try {
-          toolArgs = JSON.parse(rawArgs);
-        } catch (e) {}
-      }
+      const toolArgs = parseRawFunctionArgs(soloMatch[2]);
       parsedToolCalls.push({
         id: 'call_' + Math.random().toString(36).substring(2, 9),
         type: 'function',

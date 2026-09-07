@@ -113,11 +113,12 @@ assert(parsedMissing.items && parsedMissing.items.length === 2, 'Harus memuat 2 
 console.log('✅ Missing drive folders payload terkompresi dengan sempurna');
 
 console.log('\n=== TEST 4: TESTING EXTRACT TOOL CALLS FROM XML CONTENT ===');
-const { extractToolCallsFromContent } = (() => {
+const { extractToolCallsFromContent, parseRawFunctionArgs } = (() => {
   const fs = require('fs');
   const code = fs.readFileSync(require.resolve('../src/services/aiService'), 'utf8');
-  const fnCode = code.match(/function extractToolCallsFromContent\([\s\S]*?\n\}/)[0];
-  return new Function(`${fnCode}; return { extractToolCallsFromContent };`)();
+  const fn1 = code.match(/function parseRawFunctionArgs\([\s\S]*?\n\}/)[0];
+  const fn2 = code.match(/function extractToolCallsFromContent\([\s\S]*?\n\}/)[0];
+  return new Function(`${fn1}; ${fn2}; return { extractToolCallsFromContent, parseRawFunctionArgs };`)();
 })();
 
 const rawMessageFromQwen = {
@@ -139,5 +140,16 @@ const strayMsg = {
 const sanitizedStray = extractToolCallsFromContent(strayMsg);
 assert(!sanitizedStray.content.includes('<tool_call>'), 'Tag tool_call tidak boleh bocor');
 console.log('✅ Stray XML tag berhasil dibersihkan dari konten output:', sanitizedStray.content);
+
+const rawMessageWithParams = {
+  role: 'assistant',
+  content: `<tool_call>\n<function=createClientDriveFolder>\n<parameter=nama>Blooma</parameter>\n<parameter=tanggal>6 September 2026</parameter>\n</function>\n</tool_call>`
+};
+const extractedParams = extractToolCallsFromContent(rawMessageWithParams);
+assert(extractedParams.tool_calls && extractedParams.tool_calls.length === 1, 'Harus mengekstrak 1 tool call dengan parameter');
+const parsedArgs = JSON.parse(extractedParams.tool_calls[0].function.arguments);
+assert.strictEqual(parsedArgs.nama, 'Blooma', 'Parameter nama harus Blooma');
+assert.strictEqual(parsedArgs.tanggal, '6 September 2026', 'Parameter tanggal harus 6 September 2026');
+console.log('✅ Berhasil mem-parsing parameter XML Qwen (<parameter=key>val</parameter>):', parsedArgs);
 
 console.log('\n🎉 SEMUA TEST BERHASIL MELEWATI VERIFIKASI!');
