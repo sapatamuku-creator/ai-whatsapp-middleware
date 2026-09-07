@@ -148,6 +148,17 @@ const toolDeclarations = [
       },
       required: ["nama"]
     }
+  },
+  {
+    name: "createMissingDriveFolders",
+    description: "Mencari event yang akan datang yang belum memiliki folder Google Drive dan otomatis membuatkan folder Drive untuk klien-klien tersebut serta mencatat linknya ke spreadsheet. Gunakan tool ini saat Super Admin bertanya event mana yang belum ada folder drive dan/atau meminta tolong dibuatkan.",
+    parameters: {
+      type: "OBJECT",
+      properties: {
+        days: { type: "NUMBER", description: "Rentang hari ke depan yang ingin dicek (default: 90 hari)" },
+        auto_create: { type: "BOOLEAN", description: "true jika ingin langsung dibuatkan foldernya (default), false jika hanya ingin mengecek/melihat daftar event yang belum punya folder" }
+      }
+    }
   }
 ];
 

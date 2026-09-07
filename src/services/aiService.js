@@ -16,7 +16,7 @@ Kamu saat ini sedang berkomunikasi langsung dengan SUPER ADMIN / PEMILIK PRIBADI
 
 HAK AKSES & KEMAMPUAN:
 - Akses 24/7 penuh ke seluruh tools database headless Google Apps Script (GAS).
-- Tool Calling tersedia: 'getMonthlyOmset', 'addBooking', 'updatePayment', 'getPaymentSummary', 'generatePdfInvoice', 'createClientDriveFolder', 'syncGoogleCalendar', 'getBookingByName', 'getAllBookings', 'checkBookingConflict', 'getUpcomingEvents', 'getUnpaidClients'.
+- Tool Calling tersedia: 'getMonthlyOmset', 'addBooking', 'updatePayment', 'getPaymentSummary', 'generatePdfInvoice', 'createClientDriveFolder', 'syncGoogleCalendar', 'getBookingByName', 'getAllBookings', 'checkBookingConflict', 'getUpcomingEvents', 'getUnpaidClients', 'createMissingDriveFolders'.
 - Saat Super Admin mengirimkan foto bukti transfer, sertakan parameter bukti_url yang tersedia.
 
 ATURAN MUTLAK INTEGRITAS DATA & ANTI-HALUSINASI (ZERO TOLERANCE):
@@ -37,6 +37,11 @@ ATURAN MUTLAK INTEGRITAS DATA & ANTI-HALUSINASI (ZERO TOLERANCE):
 
 3. MULTIPLE BOOKINGS / AMBIGUITAS:
    - Jika satu klien memiliki beberapa jadwal acara dan Admin tidak menyebutkan tanggal spesifik, mintakan konfirmasi tanggal mana yang dimaksud sebelum mengambil tindakan.
+
+4. EVENT MENDATANG & GOOGLE DRIVE:
+   - Jika Super Admin menanyakan event mana yang belum memiliki folder Google Drive atau meminta dibuatkan foldernya:
+     Gunakan tool 'createMissingDriveFolders' (atau 'getUpcomingEvents').
+     Tool 'createMissingDriveFolders' otomatis memeriksa event mendatang dan membuatkan foldernya sekaligus mencatat link ke spreadsheet.
 
 FORMAT BALASAN:
 - Bahasa Indonesia yang profesional, padat, lugas, santun, dan terstruktur.
@@ -116,6 +121,8 @@ BATASAN & WHITELIST KETAT:
 
 /**
  * Memory percakapan per user (In-Memory Map, rolling window)
+ * HANYA menyimpan riwayat percakapan teks bersih (role: user & assistant)
+ * agar token tetap ramping dan terbebas 100% dari Error 413.
  */
 const userSessions = new Map();
 
@@ -130,7 +137,6 @@ function getSessionHistory(sender, isAdmin = false) {
   }
 
   const session = userSessions.get(sender);
-  // Reset jika role berganti antara admin dan publik
   if (session.isAdmin !== isAdmin) {
     session.isAdmin = isAdmin;
     session.history = [{ role: 'system', content: targetPrompt }];
@@ -139,60 +145,127 @@ function getSessionHistory(sender, isAdmin = false) {
   return session.history;
 }
 
-function appendToSession(sender, role, content, extra = {}, isAdmin = false) {
-  const history = getSessionHistory(sender, isAdmin);
-  history.push({ role, content, ...extra });
-  
+function saveTurnToSession(sender, userMessage, assistantReply, isAdmin = false) {
   const targetPrompt = isAdmin ? SYSTEM_PROMPT_ADMIN : SYSTEM_PROMPT_PUBLIC;
-
-  // Jaga ukuran history agar token tetap ramping dan tidak pernah 413
-  if (history.length > 8) {
-    const recent = history.slice(history.length - 6);
-    userSessions.set(sender, {
-      isAdmin: isAdmin,
-      history: [
-        { role: 'system', content: targetPrompt },
-        ...recent
-      ]
-    });
+  const session = userSessions.get(sender) || { isAdmin, history: [{ role: 'system', content: targetPrompt }] };
+  
+  const history = session.history.filter(m => m.role === 'user' || m.role === 'assistant');
+  
+  if (userMessage && userMessage.trim()) {
+    history.push({ role: 'user', content: userMessage.trim() });
   }
+  if (assistantReply && assistantReply.trim()) {
+    history.push({ role: 'assistant', content: assistantReply.trim() });
+  }
+
+  // Simpan maksimal 6 pesan terakhir (3 pasang dialog user-assistant)
+  const recent = history.slice(-6);
+  userSessions.set(sender, {
+    isAdmin,
+    history: [
+      { role: 'system', content: targetPrompt },
+      ...recent
+    ]
+  });
+}
+
+function clearSessionHistory(sender) {
+  userSessions.delete(sender);
 }
 
 /**
  * Kompresi dan sanitasi hasil data dari Google Apps Script agar hemat token & anti Error 413
+ * Menjamin hasil selalu berupa valid JSON dan ukuran string <= 2.500 karakter.
  */
 function sanitizeAndCompressGasResult(gasResult) {
   if (!gasResult) return JSON.stringify({ success: false, message: 'No data returned' });
 
+  // 1. Ekstrak array jika ada (bisa berupa gasResult langsung, gasResult.data, gasResult.events, atau gasResult.conflicts)
+  let items = null;
+  let wrapper = {};
+
   if (Array.isArray(gasResult)) {
-    const trimmed = gasResult.map(row => {
-      if (typeof row === 'object' && row !== null) {
-        return {
-          nama: row.nama || row.Nama || row.name || row.client || '',
-          tanggal: row.tanggal || row.Tanggal || row.date || '',
-          layanan: row.layanan || row.Layanan || '',
-          paket: row.paket || row.Paket || '',
-          harga: Number(row.harga || row.Harga || row['Harga Paket'] || 0),
-          dpTotal: (Number(row.dp1 || row.DP1 || 0) + Number(row.dp2 || row.DP2 || 0) + Number(row.dp3 || row.DP3 || 0) + Number(row.dp4 || row.DP4 || 0)),
-          sisa: Number(row.sisa || row.Sisa || row['Sisa Pembayaran'] || 0),
-          status: row.status || row.Status || ''
-        };
-      }
-      return row;
-    });
-
-    const str = JSON.stringify(trimmed);
-    if (str.length > 15000) {
-      return str.substring(0, 15000) + '... (data diringkas)';
+    items = gasResult;
+  } else if (typeof gasResult === 'object' && gasResult !== null) {
+    if (Array.isArray(gasResult.data)) {
+      items = gasResult.data;
+      wrapper = { success: gasResult.success !== false, count: gasResult.count || gasResult.data.length };
+    } else if (Array.isArray(gasResult.events)) {
+      items = gasResult.events;
+      wrapper = { success: gasResult.success !== false, count: gasResult.events.length, message: gasResult.message };
+    } else if (Array.isArray(gasResult.conflicts)) {
+      items = gasResult.conflicts;
+      wrapper = { success: gasResult.success !== false, hasConflict: gasResult.hasConflict, count: gasResult.conflicts.length };
     }
-    return str;
   }
 
-  const str = JSON.stringify(gasResult);
-  if (str.length > 20000) {
-    return str.substring(0, 20000) + '... (data diringkas)';
+  // Helper pemeta satu baris data klien/booking agar seringkas mungkin
+  const mapRow = (row) => {
+    if (typeof row !== 'object' || row === null) return row;
+    const hasDrive = Boolean(
+      row.hasDrive || 
+      (row['Folder Drive URL'] && String(row['Folder Drive URL']).trim().startsWith('http')) ||
+      (row.folder_url && String(row.folder_url).trim().startsWith('http')) ||
+      (row.drive_url && String(row.drive_url).trim().startsWith('http'))
+    );
+    const driveUrl = row.folder_url || row.drive_url || row['Folder Drive URL'] || (hasDrive ? 'Tersedia' : null);
+
+    return {
+      nama: row.nama || row.Nama || row.name || row.client || '',
+      tanggal: row.tanggal || row.Tanggal || row.date || '',
+      layanan: row.layanan || row.Layanan || undefined,
+      paket: row.paket || row.Paket || undefined,
+      sisa: Number(row.sisa || row.Sisa || row['Sisa Pembayaran'] || 0) || undefined,
+      hasDrive: hasDrive,
+      driveUrl: driveUrl || undefined,
+      status: row.status || row.Status || undefined
+    };
+  };
+
+  if (items) {
+    // Batasi maksimal 15 item teratas agar token tetap super ramping
+    const maxItems = 15;
+    const trimmedItems = items.slice(0, maxItems).map(mapRow);
+    const resultObj = {
+      ...wrapper,
+      total_data: items.length,
+      showing: trimmedItems.length,
+      items: trimmedItems
+    };
+    if (items.length > maxItems) {
+      resultObj.note = `Data diringkas ${maxItems} dari ${items.length} total baris`;
+    }
+
+    let jsonStr = JSON.stringify(resultObj);
+    // Jika masih terlalu panjang (> 2500 char), kurangi ke 8 item
+    if (jsonStr.length > 2500 && trimmedItems.length > 8) {
+      resultObj.items = trimmedItems.slice(0, 8);
+      resultObj.showing = 8;
+      resultObj.note = `Data diringkas 8 dari ${items.length} total baris`;
+      jsonStr = JSON.stringify(resultObj);
+    }
+    return jsonStr;
   }
-  return str;
+
+  // 2. Jika berupa objek tunggal (misal respon createClientDriveFolder, invoice, payment summary)
+  if (typeof gasResult === 'object') {
+    const cleanObj = {};
+    for (const [key, val] of Object.entries(gasResult)) {
+      if (['stack', 'raw', 'html', 'body'].includes(key)) continue;
+      cleanObj[key] = val;
+    }
+    const jsonStr = JSON.stringify(cleanObj);
+    if (jsonStr.length > 2500) {
+      return JSON.stringify({
+        success: gasResult.success !== false,
+        message: gasResult.message || 'Hasil dipersingkat untuk efisiensi data',
+        preview: jsonStr.substring(0, 1000)
+      });
+    }
+    return jsonStr;
+  }
+
+  return String(gasResult).substring(0, 2500);
 }
 
 /**
@@ -239,6 +312,7 @@ async function transcribeAudioGroq(audioUrl) {
 
 /**
  * Panggil Groq Chat Completion API dengan Auto-Failover Matrix Terpusat (src/models.js)
+ * Dilengkapi 413 Auto-Recovery untuk payload besar
  */
 async function callGroqChat(messages, tools = []) {
   if (!config.GROQ_API_KEY) {
@@ -286,6 +360,47 @@ async function callGroqChat(messages, tools = []) {
       const errMsg = err.response && err.response.data ? JSON.stringify(err.response.data) : err.message;
       console.warn(`[GROQ_CHAT WARN] Model "${model}" mengalami kendala (${errMsg}), beralih ke cadangan...`);
       lastError = err;
+
+      // Jika terjadi error 413 (Payload Too Large), jangan ulangi failover dengan payload identik
+      if (err.response && err.response.status === 413) {
+        break;
+      }
+    }
+  }
+
+  // Emergency Compact Retry khusus error 413: potong messages ke minimal (system prompt + user prompt terakhir)
+  const is413 = lastError && (
+    (lastError.response && lastError.response.status === 413) ||
+    (lastError.message && lastError.message.includes('413'))
+  );
+
+  if (is413 && cleanMessages.length > 2) {
+    console.warn('[GROQ_CHAT EMERGENCY] Terdeteksi HTTP 413 Payload Too Large. Mengaktifkan Emergency Compact Retry...');
+    try {
+      const emergencyMessages = [
+        cleanMessages[0], // System prompt
+        cleanMessages[cleanMessages.length - 1] // Pesan terakhir
+      ];
+      const emergencyModel = uniqueModels[0] || 'openai/gpt-oss-120b';
+      const emergencyRes = await axios.post(config.GROQ_URL, {
+        model: emergencyModel,
+        messages: emergencyMessages,
+        temperature: 0.3,
+        max_tokens: 1000
+      }, {
+        headers: {
+          'Authorization': `Bearer ${config.GROQ_API_KEY}`,
+          'Content-Type': 'application/json'
+        },
+        timeout: 30000
+      });
+
+      const choice = emergencyRes.data.choices && emergencyRes.data.choices[0];
+      if (choice && choice.message) {
+        return choice.message;
+      }
+    } catch (emergencyErr) {
+      console.error('[GROQ_CHAT EMERGENCY FAILED]:', emergencyErr.message);
     }
   }
 
@@ -363,24 +478,25 @@ async function processMessageWithAI({ sender, message, mediaUrl, isImage, isAudi
       }
     }
 
-    // Tambahkan pesan user ke sesi percakapan
-    appendToSession(sender, 'user', promptContent, {}, isAdmin);
-
     // ========================================================
     // MODE PUBLIK: ZERO HEADLESS TOOLS (HANYA CS INFORMATIF)
     // ========================================================
     if (!isAdmin) {
       const currentHistory = getSessionHistory(sender, false);
-      const assistantMsg = await callGroqChat(currentHistory, []); // TOOLS = [] KOSONG!
-      
+      const turnMessages = [
+        ...currentHistory,
+        { role: 'user', content: promptContent }
+      ];
+
+      const assistantMsg = await callGroqChat(turnMessages, []);
       let finalReply = assistantMsg.content || '';
-      appendToSession(sender, 'assistant', finalReply, {}, false);
 
       // Wajib sertakan footer bot untuk publik jika belum ada
       if (!finalReply.includes('_(NOVA AGENT)_')) {
         finalReply = finalReply.trim() + '\n\n_(NOVA AGENT)_';
       }
 
+      saveTurnToSession(sender, promptContent, finalReply, false);
       return finalReply;
     }
 
@@ -390,22 +506,30 @@ async function processMessageWithAI({ sender, message, mediaUrl, isImage, isAudi
     let loopCount = 0;
     const maxLoops = 5;
 
+    // Siapkan riwayat turn lokal untuk request ini
+    const currentHistory = getSessionHistory(sender, true);
+    const turnMessages = [
+      ...currentHistory,
+      { role: 'user', content: promptContent }
+    ];
+
     while (loopCount < maxLoops) {
       loopCount++;
-      const currentHistory = getSessionHistory(sender, true);
-      
-      const assistantMsg = await callGroqChat(currentHistory, groqTools);
+      const assistantMsg = await callGroqChat(turnMessages, groqTools);
 
       if (!assistantMsg.tool_calls || assistantMsg.tool_calls.length === 0) {
-        appendToSession(sender, 'assistant', assistantMsg.content || '', {}, true);
-        return assistantMsg.content;
+        const finalReply = assistantMsg.content || '';
+        saveTurnToSession(sender, promptContent, finalReply, true);
+        return finalReply;
       }
 
       console.log(`[GROQ_TOOL] Model meminta eksekusi ${assistantMsg.tool_calls.length} tool(s) (Loop ${loopCount}/${maxLoops})`);
       
-      appendToSession(sender, 'assistant', assistantMsg.content || null, {
+      turnMessages.push({
+        role: 'assistant',
+        content: assistantMsg.content || null,
         tool_calls: assistantMsg.tool_calls
-      }, true);
+      });
 
       for (const toolCall of assistantMsg.tool_calls) {
         const toolName = toolCall.function.name;
@@ -436,8 +560,7 @@ async function processMessageWithAI({ sender, message, mediaUrl, isImage, isAudi
         const compressedGasResult = sanitizeAndCompressGasResult(rawGasResult);
         console.log(`[GAS_RESULT] "${toolName}" (Panjang payload: ${compressedGasResult.length} karakter)`);
 
-        const historyRef = getSessionHistory(sender, true);
-        historyRef.push({
+        turnMessages.push({
           role: 'tool',
           tool_call_id: toolCall.id,
           name: toolName,
@@ -446,12 +569,22 @@ async function processMessageWithAI({ sender, message, mediaUrl, isImage, isAudi
       }
     }
 
-    return "Permintaan Anda telah berhasil diproses oleh sistem Knowhere Studio. Ada yang bisa NOVA bantu lagi?";
+    // Jika melebihi maxLoops, minta Groq buat simpulan akhir
+    const fallbackMsg = await callGroqChat(turnMessages, []);
+    const finalReply = fallbackMsg.content || "Permintaan Anda telah berhasil diproses oleh sistem Knowhere Studio. Ada yang bisa NOVA bantu lagi?";
+    saveTurnToSession(sender, promptContent, finalReply, true);
+    return finalReply;
   } catch (error) {
     console.error('[AI_SERVICE ERROR]:', error.message);
     if (!isAdmin) {
       return `Maaf, saat ini sistem informasi sedang sibuk. Silakan coba kembali sesaat lagi atau hubungi admin kami pada jam operasional (07.00 - 17.00 WIB).\n\n_(NOVA AGENT)_`;
     }
+
+    // Jika error 413, bersihkan sesi agar turn berikutnya kembali segar
+    if (error.message && error.message.includes('413')) {
+      clearSessionHistory(sender);
+    }
+
     return `Maaf, terjadi kendala saat memproses permintaan Super Admin: ${error.message}`;
   }
 }
