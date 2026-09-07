@@ -381,7 +381,7 @@ async function callGroqChat(messages, tools = []) {
         cleanMessages[0], // System prompt
         cleanMessages[cleanMessages.length - 1] // Pesan terakhir
       ];
-      const emergencyModel = uniqueModels[0] || 'openai/gpt-oss-120b';
+      const emergencyModel = uniqueModels[0] || 'llama-3.3-70b-versatile';
       const emergencyRes = await axios.post(config.GROQ_URL, {
         model: emergencyModel,
         messages: emergencyMessages,
@@ -405,6 +405,116 @@ async function callGroqChat(messages, tools = []) {
   }
 
   throw new Error(`Semua model Groq gagal dipanggil: ${lastError ? lastError.message : 'Unknown error'}`);
+}
+
+/**
+ * Mengekstrak tool calls jika model mengembalikan format XML/teks (<tool_call> ... </tool_call>)
+ * alih-alih array message.tool_calls standar, serta mensterilkan tag XML agar tidak bocor ke WhatsApp.
+ */
+function extractToolCallsFromContent(message) {
+  if (!message) return message;
+  if (message.tool_calls && message.tool_calls.length > 0) {
+    return message;
+  }
+
+  const content = message.content || '';
+  if (!content.includes('<tool_call>') && !content.includes('<function=')) {
+    return message;
+  }
+
+  const parsedToolCalls = [];
+
+  // Pola 1: <tool_call><function=namaTool>args</function></tool_call>
+  const xmlFuncRegex = /<tool_call>[\s\S]*?<function=([a-zA-Z0-9_]+)>([\s\S]*?)<\/function>[\s\S]*?<\/tool_call>/gi;
+  let match;
+  while ((match = xmlFuncRegex.exec(content)) !== null) {
+    const toolName = match[1].trim();
+    let toolArgs = {};
+    const rawArgs = match[2].trim();
+    if (rawArgs) {
+      try {
+        toolArgs = JSON.parse(rawArgs);
+      } catch (e) {
+        toolArgs = {};
+      }
+    }
+    parsedToolCalls.push({
+      id: 'call_' + Math.random().toString(36).substring(2, 9),
+      type: 'function',
+      function: {
+        name: toolName,
+        arguments: JSON.stringify(toolArgs)
+      }
+    });
+  }
+
+  // Pola 2: <tool_call>{"name": "...", "arguments": {...}}</tool_call>
+  if (parsedToolCalls.length === 0) {
+    const jsonToolRegex = /<tool_call>([\s\S]*?)<\/tool_call>/gi;
+    let jsonMatch;
+    while ((jsonMatch = jsonToolRegex.exec(content)) !== null) {
+      try {
+        const parsed = JSON.parse(jsonMatch[1].trim());
+        if (parsed && (parsed.name || parsed.function)) {
+          parsedToolCalls.push({
+            id: 'call_' + Math.random().toString(36).substring(2, 9),
+            type: 'function',
+            function: {
+              name: parsed.name || parsed.function,
+              arguments: typeof parsed.arguments === 'string' ? parsed.arguments : JSON.stringify(parsed.arguments || {})
+            }
+          });
+        }
+      } catch (e) {}
+    }
+  }
+
+  // Pola 3: <function=namaTool>args</function> (tanpa tag tool_call)
+  if (parsedToolCalls.length === 0) {
+    const soloFuncRegex = /<function=([a-zA-Z0-9_]+)>([\s\S]*?)<\/function>/gi;
+    let soloMatch;
+    while ((soloMatch = soloFuncRegex.exec(content)) !== null) {
+      const toolName = soloMatch[1].trim();
+      let toolArgs = {};
+      const rawArgs = soloMatch[2].trim();
+      if (rawArgs) {
+        try {
+          toolArgs = JSON.parse(rawArgs);
+        } catch (e) {}
+      }
+      parsedToolCalls.push({
+        id: 'call_' + Math.random().toString(36).substring(2, 9),
+        type: 'function',
+        function: {
+          name: toolName,
+          arguments: JSON.stringify(toolArgs)
+        }
+      });
+    }
+  }
+
+  if (parsedToolCalls.length > 0) {
+    console.log(`[EXTRACT_TOOL_CALLS] Berhasil mengekstrak ${parsedToolCalls.length} tool call dari XML teks:`, parsedToolCalls.map(t => t.function.name));
+    return {
+      ...message,
+      tool_calls: parsedToolCalls,
+      content: null
+    };
+  }
+
+  // Sanitasi darurat: Jangan pernah membiarkan tag <tool_call> mentah terkirim ke WhatsApp
+  if (content.includes('<tool_call>') || content.includes('</tool_call>') || content.includes('<function=')) {
+    const sanitizedContent = content
+      .replace(/<tool_call>[\s\S]*?<\/tool_call>/gi, '')
+      .replace(/<function=[^>]+>[\s\S]*?<\/function>/gi, '')
+      .trim();
+    return {
+      ...message,
+      content: sanitizedContent || 'Sedang memproses data dari spreadsheet...'
+    };
+  }
+
+  return message;
 }
 
 /**
@@ -515,7 +625,8 @@ async function processMessageWithAI({ sender, message, mediaUrl, isImage, isAudi
 
     while (loopCount < maxLoops) {
       loopCount++;
-      const assistantMsg = await callGroqChat(turnMessages, groqTools);
+      let assistantMsg = await callGroqChat(turnMessages, groqTools);
+      assistantMsg = extractToolCallsFromContent(assistantMsg);
 
       if (!assistantMsg.tool_calls || assistantMsg.tool_calls.length === 0) {
         const finalReply = assistantMsg.content || '';

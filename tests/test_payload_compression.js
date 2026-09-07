@@ -112,4 +112,32 @@ const parsedMissing = JSON.parse(compressedMissing);
 assert(parsedMissing.items && parsedMissing.items.length === 2, 'Harus memuat 2 event');
 console.log('✅ Missing drive folders payload terkompresi dengan sempurna');
 
+console.log('\n=== TEST 4: TESTING EXTRACT TOOL CALLS FROM XML CONTENT ===');
+const { extractToolCallsFromContent } = (() => {
+  const fs = require('fs');
+  const code = fs.readFileSync(require.resolve('../src/services/aiService'), 'utf8');
+  const fnCode = code.match(/function extractToolCallsFromContent\([\s\S]*?\n\}/)[0];
+  return new Function(`${fnCode}; return { extractToolCallsFromContent };`)();
+})();
+
+const rawMessageFromQwen = {
+  role: 'assistant',
+  content: `<tool_call>\n<function=getAllBookings>\n</function>\n</tool_call>`
+};
+
+const extracted = extractToolCallsFromContent(rawMessageFromQwen);
+assert(extracted.tool_calls && extracted.tool_calls.length === 1, 'Harus mengekstrak 1 tool call');
+assert.strictEqual(extracted.tool_calls[0].function.name, 'getAllBookings', 'Nama tool harus getAllBookings');
+assert.strictEqual(extracted.content, null, 'Content harus diset null agar tidak bocor ke WhatsApp');
+console.log('✅ Berhasil mengekstrak tool call dari XML teks WhatsApp:', extracted.tool_calls[0].function.name);
+
+// Test sanitize stray tool_call tags
+const strayMsg = {
+  role: 'assistant',
+  content: '<tool_call>invalid syntax</tool_call> Halo Super Admin!'
+};
+const sanitizedStray = extractToolCallsFromContent(strayMsg);
+assert(!sanitizedStray.content.includes('<tool_call>'), 'Tag tool_call tidak boleh bocor');
+console.log('✅ Stray XML tag berhasil dibersihkan dari konten output:', sanitizedStray.content);
+
 console.log('\n🎉 SEMUA TEST BERHASIL MELEWATI VERIFIKASI!');
